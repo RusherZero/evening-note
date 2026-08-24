@@ -16,9 +16,9 @@ additional_redirect_urls = [
 enable_signup = true
 enable_confirmations = true
 max_frequency = "1m"
-# Password changes require the current password in the hosted dashboard. Keep
-# email-OTP reauthentication disabled so the password flow stays link-based.
-secure_password_change = false
+# Require the current password for in-session password changes. Password
+# recovery continues to use Supabase's emailed recovery link.
+secure_password_change = true
 
 [auth.mfa.totp]
 enroll_enabled = true

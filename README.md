@@ -42,7 +42,7 @@ npm run build
 
 2. Apply the password-auth configuration with `supabase config push`. It enables email signup and confirmation, makes the GitHub Pages URL canonical, and allowlists the exact local, Sites, Pages, and password-recovery callbacks. `supabase db push` applies database migrations only; it does not apply Auth configuration.
 
-   In **Authentication → Sign In / Providers → Email**, set the minimum password length to `8`, enable **Confirm email**, and enable **Require current password when updating**. Leave the separate secure-password-change/email-OTP reauthentication option disabled. The application removes OTP sign-in entirely; an existing OTP account can use **Forgot password** to set its first password without changing its user ID or entries.
+   In **Authentication → Sign In / Providers → Email**, set the minimum password length to `8`. The tracked Auth configuration enables **Confirm email** and **Require current password when updating**. The application removes OTP sign-in entirely; an existing OTP account can use **Forgot password** to set its first password without changing its user ID or entries.
 
    Supabase's built-in mailer only sends confirmation and recovery emails to project-team addresses and is limited to two messages per hour. That is sufficient for initial team testing. Configure custom SMTP before allowing public registration.
 
@@ -101,7 +101,7 @@ npm run build
 
 ## GitHub Pages
 
-This repository includes a conditional static export and a manual GitHub Pages workflow. It keeps the existing Sites build target intact, while the Pages build scopes assets, the manifest, offline cache, service worker, and notification navigation to its configured project path.
+This repository includes a conditional static export and a GitHub Pages workflow. It keeps the existing Sites build target intact, while the Pages build scopes assets, the manifest, offline cache, service worker, and notification navigation to its configured project path.
 
 Before running the workflow:
 
@@ -112,7 +112,7 @@ Before running the workflow:
    - `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
    - `NEXT_PUBLIC_SITE_URL` (`https://rusherzero.github.io/evening-note` for the default project URL)
    - `NEXT_PUBLIC_BASE_PATH` (`/evening-note` for the default project URL; `/` for a custom domain root)
-3. Merge the workflow into the default branch, then manually run **Deploy Evening Note to GitHub Pages**. It tests, lints, type-checks, validates Edge syntax, builds, audits the configured app scope, and publishes `out/`.
+3. Push or merge a change into `main`. **Deploy Evening Note to GitHub Pages** runs automatically; it can also be started manually. The workflow tests, lints, type-checks, validates Edge syntax, builds, audits the configured app scope, and publishes `out/`.
 4. Configure the backend for the Pages host, then redeploy the three Edge Functions:
 
    ```bash
