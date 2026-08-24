@@ -38,3 +38,6 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
+
+# Supabase CLI link and cache state
+/supabase/.temp/

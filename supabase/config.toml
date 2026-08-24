@@ -1,5 +1,23 @@
 project_id = "evening-note"
 
+[auth]
+site_url = "https://evening-note-1945.gs-samshuijzen.chatgpt.site"
+additional_redirect_urls = [
+  "http://localhost:3000",
+  "https://evening-note-1945.gs-samshuijzen.chatgpt.site"
+]
+
+[auth.email]
+# Preserve the hosted project's current security settings until custom SMTP is
+# connected and the six-digit template in supabase/templates can be enabled.
+enable_confirmations = true
+max_frequency = "1m"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
 [functions.push-subscription]
 verify_jwt = false
 

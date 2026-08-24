@@ -39,7 +39,9 @@ npm run build
    supabase db push
    ```
 
-2. In **Authentication → Email Templates → Magic Link**, replace the link-oriented template with a code-oriented template that includes `{{ .Token }}`. The client calls `verifyOtp` with `type: "email"`; the token must remain a six-digit string.
+2. Configure custom SMTP (or use a Supabase plan/provider that permits hosted email-template changes). Supabase's default free-tier mail provider rejects custom template updates. Then set the email OTP length to six and replace **Authentication → Email Templates → Magic Link** with the code-only template in `supabase/templates/magic_link.html`, which includes `{{ .Token }}`. The client calls `verifyOtp` with `type: "email"`; the token must remain a six-digit string.
+
+   Until SMTP is connected, `supabase/config.toml` deliberately preserves the hosted project's eight-digit setting and does not activate the custom template. Sign-in is not launch-ready in that temporary state.
 
 3. Generate a VAPID P-256 key pair locally. Do not commit or paste the private key into browser configuration:
 
