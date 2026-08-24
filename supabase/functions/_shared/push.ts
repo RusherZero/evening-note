@@ -7,16 +7,20 @@ export type StoredSubscription = {
   auth_secret: string;
 };
 
-function appOrigin(): string {
-  const origin = Deno.env.get('APP_ORIGIN');
-  if (!origin) throw new Error('APP_ORIGIN is missing');
-  const parsed = new URL(origin);
+function appUrl(): string {
+  const configured = Deno.env.get('APP_URL') || Deno.env.get('APP_ORIGIN');
+  if (!configured) throw new Error('APP_URL or APP_ORIGIN is missing');
+  const parsed = new URL(configured);
   const localDevelopment = parsed.protocol === 'http:'
     && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
   if (parsed.protocol !== 'https:' && !localDevelopment) {
-    throw new Error('APP_ORIGIN must use HTTPS');
+    throw new Error('APP_URL must use HTTPS');
   }
-  return parsed.origin;
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('APP_URL must not include credentials, a query, or a fragment');
+  }
+  parsed.pathname = `${parsed.pathname.replace(/\/+$/, '')}/`;
+  return parsed.href;
 }
 
 function configureVapid() {
@@ -30,7 +34,7 @@ function configureVapid() {
 }
 
 export function notificationPayload(localDate: string, test = false) {
-  return buildNotificationPayload(appOrigin(), localDate, test);
+  return buildNotificationPayload(appUrl(), localDate, test);
 }
 
 export async function sendPush(

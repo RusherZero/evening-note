@@ -15,4 +15,14 @@ describe('PWA helpers', () => {
       'https://evening-note.example/?view=today',
     );
   });
+
+  it('keeps project-site navigation inside its configured base path', () => {
+    const origin = 'https://rusherzero.github.io';
+    expect(
+      safeNotificationTarget('/evening-note/?view=history', origin, '/evening-note'),
+    ).toBe('https://rusherzero.github.io/evening-note/?view=history');
+    expect(
+      safeNotificationTarget('/another-project/', origin, '/evening-note'),
+    ).toBe('https://rusherzero.github.io/evening-note/?view=today');
+  });
 });

@@ -25,6 +25,7 @@ When public Supabase settings are absent, local development uses preview mode. P
 ```bash
 npm test
 npm run lint
+npm run typecheck
 npm run check:edge-syntax
 npm run build
 ```
@@ -39,9 +40,9 @@ npm run build
    supabase db push
    ```
 
-2. Configure custom SMTP (or use a Supabase plan/provider that permits hosted email-template changes). Supabase's default free-tier mail provider rejects custom template updates. Then set the email OTP length to six and replace **Authentication → Email Templates → Magic Link** with the code-only template in `supabase/templates/magic_link.html`, which includes `{{ .Token }}`. The client calls `verifyOtp` with `type: "email"`; the token must remain a six-digit string.
+2. Configure custom SMTP (or use a Supabase plan/provider that permits hosted email-template changes). Supabase's default free-tier mail provider rejects custom template updates. Then run `supabase config push`, or replace **Authentication → Email Templates → Magic Link** manually with `supabase/templates/magic_link.html`. The template puts `{{ .Token }}` directly in the email instead of relying on link capture. `supabase db push` applies database migrations only; it does not apply Auth settings or email templates.
 
-   Until SMTP is connected, `supabase/config.toml` deliberately preserves the hosted project's eight-digit setting and does not activate the custom template. Sign-in is not launch-ready in that temporary state.
+   The configured code is eight digits. The client accepts and cleans up pasted numeric OTPs from 6 through 10 digits, which is Supabase's supported range. Until the hosted template can be changed, the repository is ready but token-only email delivery is not active in the remote project.
 
 3. Generate a VAPID P-256 key pair locally. Do not commit or paste the private key into browser configuration:
 
@@ -49,14 +50,17 @@ npm run build
    npm run generate:vapid
    ```
 
-4. Create a dedicated Supabase secret API key named `automations`. Hosted Edge Functions receive the `default` and `automations` keys through Supabase's `SUPABASE_SECRET_KEYS` JSON map automatically. Set the app-specific Edge Function secrets, using the deployed HTTPS origin and an operator contact email for the VAPID subject:
+4. Create a dedicated Supabase secret API key named `automations`. Hosted Edge Functions receive the `default` and `automations` keys through Supabase's `SUPABASE_SECRET_KEYS` JSON map automatically. Set the app-specific Edge Function secrets. `APP_ORIGIN` is the bare browser origin for CORS; `APP_URL` is the full canonical app URL used in notification links and may contain a project path:
 
    ```bash
    supabase secrets set APP_ORIGIN=https://YOUR_SITE_HOSTNAME
+   supabase secrets set APP_URL=https://YOUR_SITE_HOSTNAME/OPTIONAL_BASE_PATH
    supabase secrets set VAPID_SUBJECT=mailto:operator@example.com
    supabase secrets set VAPID_PUBLIC_KEY=YOUR_VAPID_PUBLIC_KEY
    supabase secrets set VAPID_PRIVATE_KEY=YOUR_VAPID_PRIVATE_KEY
    ```
+
+   A comma-separated `APP_ORIGINS` allowlist is available only for a short host migration. Push payloads use one global `APP_URL`, so two installed frontends are not supported as simultaneous canonical notification hosts.
 
    `SUPABASE_SECRET_KEY` and `AUTOMATIONS_SECRET_KEY` remain supported for local development; `SUPABASE_SERVICE_ROLE_KEY` is a legacy fallback.
 
@@ -88,9 +92,42 @@ npm run build
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
    - `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
    - `NEXT_PUBLIC_SITE_URL`
+   - `NEXT_PUBLIC_BASE_PATH` (empty for a root deployment)
    - `NEXT_PUBLIC_DEMO_MODE=false`
 
-8. Set the Supabase Auth Site URL to the deployed origin. The Edge Functions allow that exact `APP_ORIGIN` plus `http://localhost:3000` for local development.
+8. Set the Supabase Auth Site URL to the full deployed app URL. The Edge Functions allow the configured bare origins plus `http://localhost:3000` for local development.
+
+## GitHub Pages
+
+This repository includes a conditional static export and a manual GitHub Pages workflow. It keeps the existing Sites build target intact, while the Pages build scopes assets, the manifest, offline cache, service worker, and notification navigation to its configured project path.
+
+Before running the workflow:
+
+1. In the GitHub repository, select **Settings → Pages → Source → GitHub Actions**.
+2. Add these GitHub Actions repository variables (they are browser-public values, not private secrets):
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
+   - `NEXT_PUBLIC_SITE_URL` (`https://rusherzero.github.io/evening-note` for the default project URL)
+   - `NEXT_PUBLIC_BASE_PATH` (`/evening-note` for the default project URL; `/` for a custom domain root)
+3. Merge the workflow into the default branch, then manually run **Deploy Evening Note to GitHub Pages**. It tests, lints, type-checks, validates Edge syntax, builds, audits the configured app scope, and publishes `out/`.
+4. Configure the backend for the Pages host, then redeploy the three Edge Functions:
+
+   ```bash
+   supabase secrets set APP_ORIGIN=https://rusherzero.github.io
+   supabase secrets set APP_URL=https://rusherzero.github.io/evening-note
+   ```
+
+   Treat this as a host cutover: disable reminders in the old installed frontend, use Pages as the only canonical notification host, and then enable reminders again in the new installation.
+
+For a local production-equivalent artifact, provide the public environment values and run:
+
+```bash
+npm run build:pages
+npm run check:pages-build
+```
+
+The default project URL is `https://rusherzero.github.io/evening-note/`. GitHub Pages projects on the same account share the `rusherzero.github.io` browser origin, which means another Pages repository on that account could access origin-scoped browser storage. Because Evening Note holds private notes and an auth session, use the default URL for testing only; a dedicated custom domain is a production launch requirement.
 
 ## Scheduling and privacy behavior
 
@@ -118,7 +155,7 @@ group by status;
 
 ## iPhone acceptance check
 
-Use Safari on iOS 16.4 or newer, choose **Share → Add to Home Screen**, then open the installed app. Sign in inside that Home Screen app, enable reminders from Settings, and send a test. Confirm that a cold notification tap opens `/?view=today`. Daily delivery is best-effort around 19:45; connectivity, Focus, and Scheduled Summary can delay the visible alert.
+Use Safari on iOS 16.4 or newer, choose **Share → Add to Home Screen**, then open the installed app. Sign in inside that Home Screen app, enable reminders from Settings, and send a test. Confirm that a cold notification tap opens the deployment's `?view=today` URL inside its app scope. Daily delivery is best-effort around 19:45; connectivity, Focus, and Scheduled Summary can delay the visible alert.
 
 Run database tests against a local Supabase stack with:
 

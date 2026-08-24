@@ -22,4 +22,17 @@ describe('declarative Web Push payload', () => {
     expect(payload.notification.tag).toBe('evening-note-test');
     expect(payload.notification.body).toBe('Your evening reminder is ready.');
   });
+
+  it('keeps project-site notification URLs inside the app base path', () => {
+    const payload = buildNotificationPayload(
+      'https://rusherzero.github.io/evening-note',
+      '2026-08-24',
+    );
+    expect(payload.notification.navigate).toBe(
+      'https://rusherzero.github.io/evening-note/?view=today',
+    );
+    expect(payload.notification.icon).toBe(
+      'https://rusherzero.github.io/evening-note/icon-192.png',
+    );
+  });
 });

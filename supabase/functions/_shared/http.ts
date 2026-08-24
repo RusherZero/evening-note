@@ -1,11 +1,27 @@
 const DEFAULT_ORIGIN = 'http://localhost:3000';
 
+function originOf(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function configuredOrigins(): string[] {
+  const primary = originOf(Deno.env.get('APP_ORIGIN') || DEFAULT_ORIGIN) || DEFAULT_ORIGIN;
+  const additional = (Deno.env.get('APP_ORIGINS') || '')
+    .split(',')
+    .map((value) => originOf(value.trim()))
+    .filter((value): value is string => Boolean(value));
+  return [...new Set([primary, ...additional, DEFAULT_ORIGIN])];
+}
+
 function allowedOrigin(request: Request): string {
-  const configured = (Deno.env.get('APP_ORIGIN') || DEFAULT_ORIGIN).replace(/\/$/, '');
+  const configured = configuredOrigins();
   const origin = request.headers.get('origin');
-  if (!origin) return configured;
-  if (origin === configured || origin === DEFAULT_ORIGIN) return origin;
-  return configured;
+  if (origin && configured.includes(origin)) return origin;
+  return configured[0];
 }
 
 export function corsHeaders(request: Request): Record<string, string> {

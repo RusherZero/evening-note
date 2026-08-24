@@ -9,8 +9,12 @@ export function isPlausibleEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
 }
 
-export function isSixDigitOtp(value: string): boolean {
-  return /^\d{6}$/.test(value);
+export function normalizeEmailOtp(value: string): string {
+  return value.replace(/\D/g, '').slice(0, 10);
+}
+
+export function isValidEmailOtp(value: string): boolean {
+  return /^\d{6,10}$/.test(value);
 }
 
 export function requestOtpErrorMessage(status?: number): string {
