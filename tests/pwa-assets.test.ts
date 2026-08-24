@@ -8,17 +8,24 @@ const workerSource = readFileSync(join(root, 'public', 'sw.js'), 'utf8');
 
 type WorkerHandler = (event: Record<string, unknown>) => void;
 
-function loadWorker(overrides: Record<string, unknown> = {}) {
+function loadWorker(
+  overrides: Record<string, unknown> = {},
+  scope = 'https://notes.example/',
+) {
+  const scopeUrl = new URL(scope);
   const handlers: Record<string, WorkerHandler> = {};
   const showNotification = vi.fn(async () => undefined);
   const workerClients = {
     claim: vi.fn(async () => undefined),
-    matchAll: vi.fn(async () => []),
+    matchAll: vi.fn(async (): Promise<unknown[]> => []),
     openWindow: vi.fn(async () => undefined),
   };
   const workerSelf = {
-    location: { origin: 'https://notes.example' },
-    registration: { showNotification },
+    location: {
+      origin: scopeUrl.origin,
+      href: new URL('sw.js', scopeUrl).href,
+    },
+    registration: { scope: scopeUrl.href, showNotification },
     clients: workerClients,
     skipWaiting: vi.fn(async () => undefined),
     addEventListener: (name: string, handler: WorkerHandler) => { handlers[name] = handler; },
@@ -45,7 +52,7 @@ function loadWorker(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 
-  return { handlers, showNotification, caches, workerClients };
+  return { handlers, showNotification, caches, cache: defaultCache, workerClients };
 }
 
 function pngDimensions(path: string): [number, number] {
@@ -59,11 +66,21 @@ describe('installable PWA assets', () => {
     const manifest = JSON.parse(
       readFileSync(join(root, 'public', 'manifest.webmanifest'), 'utf8'),
     );
-    expect(manifest.id).toBe('/');
-    expect(manifest.scope).toBe('/');
+    expect(manifest.id).toBe('./');
+    expect(manifest.scope).toBe('./');
     expect(manifest.display).toBe('standalone');
     expect(manifest.orientation).toBeUndefined();
     expect(manifest.icons.some((icon: { purpose?: string }) => icon.purpose === 'maskable')).toBe(true);
+
+    const manifestUrl = new URL(
+      'https://rusherzero.github.io/evening-note/manifest.webmanifest',
+    );
+    expect(new URL(manifest.id, manifestUrl).pathname).toBe('/evening-note/');
+    expect(new URL(manifest.scope, manifestUrl).pathname).toBe('/evening-note/');
+    expect(new URL(manifest.start_url, manifestUrl).pathname).toBe('/evening-note/');
+    for (const icon of manifest.icons) {
+      expect(new URL(icon.src, manifestUrl).pathname).toMatch(/^\/evening-note\//);
+    }
   });
 
   it('ships correctly sized raster install icons', () => {
@@ -92,6 +109,26 @@ describe('installable PWA assets', () => {
     expect(caches.match).toHaveBeenCalledWith('/__evening-note-shell');
   });
 
+  it('precaches and restores the shell inside a project-site scope', async () => {
+    const { handlers, cache } = loadWorker(
+      {},
+      'https://rusherzero.github.io/evening-note/',
+    );
+    let work: Promise<unknown> | undefined;
+    handlers.install({
+      waitUntil: (value: Promise<unknown>) => { work = value; },
+    });
+    await work;
+
+    expect(cache.addAll).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        '/evening-note/',
+        '/evening-note/offline.html',
+        '/evening-note/manifest.webmanifest',
+      ]),
+    );
+  });
+
   it('always displays a generic visible notification and rejects external navigation', async () => {
     const { handlers, showNotification } = loadWorker();
     let work: Promise<unknown> | undefined;
@@ -118,6 +155,69 @@ describe('installable PWA assets', () => {
         data: { url: 'https://notes.example/?view=today' },
       }),
     );
+  });
+
+  it('rejects same-origin navigation outside a project-site scope', async () => {
+    const { handlers, showNotification } = loadWorker(
+      {},
+      'https://rusherzero.github.io/evening-note/',
+    );
+    let work: Promise<unknown> | undefined;
+    handlers.push({
+      data: {
+        json: () => ({
+          notification: {
+            navigate: 'https://rusherzero.github.io/another-project/',
+          },
+        }),
+      },
+      waitUntil: (value: Promise<unknown>) => { work = value; },
+    });
+
+    await work;
+    expect(showNotification).toHaveBeenCalledWith(
+      'Evening Note',
+      expect.objectContaining({
+        icon: '/evening-note/icon-192.png',
+        data: {
+          url: 'https://rusherzero.github.io/evening-note/?view=today',
+        },
+      }),
+    );
+  });
+
+  it('focuses only an open client inside the project-site scope', async () => {
+    const { handlers, workerClients } = loadWorker(
+      {},
+      'https://rusherzero.github.io/evening-note/',
+    );
+    const outsideClient = {
+      url: 'https://rusherzero.github.io/another-project/',
+      navigate: vi.fn(async () => undefined),
+      focus: vi.fn(async () => undefined),
+    };
+    const appClient = {
+      url: 'https://rusherzero.github.io/evening-note/?view=history',
+      navigate: vi.fn(async () => undefined),
+      focus: vi.fn(async () => undefined),
+    };
+    workerClients.matchAll.mockResolvedValue([outsideClient, appClient]);
+    let work: Promise<unknown> | undefined;
+    handlers.notificationclick({
+      notification: {
+        data: { url: 'https://rusherzero.github.io/evening-note/?view=today' },
+        close: vi.fn(),
+      },
+      waitUntil: (value: Promise<unknown>) => { work = value; },
+    });
+
+    await work;
+    expect(outsideClient.navigate).not.toHaveBeenCalled();
+    expect(appClient.navigate).toHaveBeenCalledWith(
+      'https://rusherzero.github.io/evening-note/?view=today',
+    );
+    expect(appClient.focus).toHaveBeenCalled();
+    expect(workerClients.openWindow).not.toHaveBeenCalled();
   });
 
   it('ships an interactive last-resort offline draft editor', () => {

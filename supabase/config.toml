@@ -4,15 +4,20 @@ project_id = "evening-note"
 site_url = "https://evening-note-1945.gs-samshuijzen.chatgpt.site"
 additional_redirect_urls = [
   "http://localhost:3000",
-  "https://evening-note-1945.gs-samshuijzen.chatgpt.site"
+  "https://evening-note-1945.gs-samshuijzen.chatgpt.site",
+  "https://rusherzero.github.io/evening-note/"
 ]
 
 [auth.email]
-# Preserve the hosted project's current security settings until custom SMTP is
-# connected and the six-digit template in supabase/templates can be enabled.
+# Eight digits increases entropy while remaining easy to paste. The client
+# accepts every Supabase-supported email OTP length (6–10 digits).
 enable_confirmations = true
 max_frequency = "1m"
 otp_length = 8
+
+[auth.email.template.magic_link]
+subject = "Your Evening Note sign-in code"
+content_path = "./supabase/templates/magic_link.html"
 
 [auth.mfa.totp]
 enroll_enabled = true

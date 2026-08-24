@@ -6,8 +6,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   INVALID_OR_EXPIRED_OTP_MESSAGE,
   isPlausibleEmail,
-  isSixDigitOtp,
+  isValidEmailOtp,
   normalizeEmail,
+  normalizeEmailOtp,
   requestOtpErrorMessage,
 } from '@/lib/auth';
 
@@ -70,7 +71,7 @@ export function AuthScreen({ client }: AuthScreenProps) {
       setEmail(normalizedEmail);
       setStage('code');
       setCooldown(60);
-      setMessage('A six-digit code is on its way.');
+      setMessage('A sign-in code is on its way.');
       try {
         window.sessionStorage.setItem(PENDING_EMAIL_KEY, normalizedEmail);
       } catch {
@@ -84,8 +85,8 @@ export function AuthScreen({ client }: AuthScreenProps) {
   }
 
   async function verifyCode() {
-    if (!isSixDigitOtp(token)) {
-      setError('Enter the six-digit code from your email.');
+    if (!isValidEmailOtp(token)) {
+      setError('Enter the 6–10 digit code from your email.');
       return;
     }
 
@@ -147,7 +148,7 @@ export function AuthScreen({ client }: AuthScreenProps) {
 
           <p className="mb-3 text-sm font-medium text-[#5d6963]">{stage === 'email' ? 'Welcome' : 'Check your inbox'}</p>
           <h1 className="max-w-sm font-serif text-[2.65rem] leading-[1.03] tracking-[-0.035em]">
-            {stage === 'email' ? 'A quiet moment, every evening.' : 'Enter your six-digit code.'}
+            {stage === 'email' ? 'A quiet moment, every evening.' : 'Paste your sign-in code.'}
           </h1>
           <p className="mt-4 max-w-sm text-[15px] leading-6 text-[#5d6963]">
             {stage === 'email'
@@ -187,12 +188,13 @@ export function AuthScreen({ client }: AuthScreenProps) {
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
+                  pattern="[0-9]{6,10}"
+                  minLength={6}
+                  maxLength={10}
                   value={token}
-                  onChange={(event) => setToken(event.target.value.replace(/\D/g, ''))}
-                  className="min-h-16 w-full rounded-2xl border border-[#d4ccbf] bg-[#fffdf8] px-5 text-center font-mono text-2xl tracking-[0.38em] outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
-                  placeholder="000000"
+                  onChange={(event) => setToken(normalizeEmailOtp(event.target.value))}
+                  className="min-h-16 w-full rounded-2xl border border-[#d4ccbf] bg-[#fffdf8] px-5 text-center font-mono text-2xl tracking-[0.22em] outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
+                  placeholder="Paste code"
                   disabled={busy}
                   required
                   autoFocus

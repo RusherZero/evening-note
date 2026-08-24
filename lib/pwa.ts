@@ -1,4 +1,6 @@
 import type { PushSubscriptionPayload } from './types';
+import { publicConfig } from './config';
+import { isPathInsideBasePath, withBasePath } from './paths';
 
 declare global {
   interface Navigator {
@@ -46,7 +48,10 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
     return null;
   }
-  await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  await navigator.serviceWorker.register(
+    withBasePath('/sw.js', publicConfig.basePath),
+    { scope: withBasePath('/', publicConfig.basePath) },
+  );
   return navigator.serviceWorker.ready;
 }
 
@@ -74,12 +79,15 @@ export function serializeSubscription(
 export function safeNotificationTarget(
   value: unknown,
   origin: string,
+  basePath = '',
 ): string {
-  const fallback = `${origin}/?view=today`;
+  const fallback = new URL(`${withBasePath('/', basePath)}?view=today`, origin).href;
   if (typeof value !== 'string') return fallback;
   try {
     const url = new URL(value, origin);
-    return url.origin === origin ? url.href : fallback;
+    return url.origin === origin && isPathInsideBasePath(url.pathname, basePath)
+      ? url.href
+      : fallback;
   } catch {
     return fallback;
   }

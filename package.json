@@ -7,12 +7,17 @@
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
+    "build": "node scripts/build-sites.mjs",
+    "build:pages": "node scripts/build-pages.mjs",
+    "preview:pages": "node scripts/preview-pages.mjs",
     "start": "vinext start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "check:edge-syntax": "node scripts/check-edge-functions.mjs",
+    "check:pages-env": "node scripts/check-pages-env.mjs",
+    "check:pages-build": "node scripts/check-pages-build.mjs",
     "generate:icons": "node scripts/generate-icons.mjs",
     "generate:vapid": "node scripts/generate-vapid.mjs"
   },
