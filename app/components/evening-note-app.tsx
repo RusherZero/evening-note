@@ -4,6 +4,15 @@
 import type { User } from '@supabase/supabase-js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthScreen } from './auth-screen';
+import { PasswordRecoveryScreen, type PasswordRecoveryState } from './password-recovery-screen';
+import {
+  PASSWORD_MIN_LENGTH,
+  type AuthFlowMode,
+  getCleanAuthCallbackUrl,
+  getRecoveryIntent,
+  passwordUpdateErrorMessage,
+  passwordValidationMessage,
+} from '@/lib/auth';
 import { isDemoMode, isPushConfigured, isSupabaseConfigured, publicConfig } from '@/lib/config';
 import { REMINDER_TIME, formatEntryDate, formatLongDate, getDeviceTimezone, getLocalDateKey } from '@/lib/date';
 import {
@@ -23,6 +32,7 @@ import {
   urlBase64ToUint8Array,
 } from '@/lib/pwa';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
+import { changeAccountPassword } from '@/lib/password-auth';
 import {
   hasNewerDraftEdits,
   isSameOperationScope,
@@ -81,6 +91,12 @@ function writeDemoEntries(entries: Entry[]): boolean {
 }
 
 export function EveningNoteApp() {
+  const [recoveryState, setRecoveryState] = useState<PasswordRecoveryState | 'none'>(() => (
+    typeof window !== 'undefined' && getRecoveryIntent(window.location.href) === 'recovery'
+      ? 'checking'
+      : 'none'
+  ));
+  const [authScreenMode, setAuthScreenMode] = useState<AuthFlowMode>('sign-in');
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -129,6 +145,7 @@ export function EveningNoteApp() {
   reconcileRunner.current ??= new LatestSerialRunner<ReconcileInput>();
   const reconcileSuspended = useRef(false);
   const reconcileRequestedWhileSuspended = useRef(false);
+  const recoveryStateRef = useRef(recoveryState);
 
   const userId = isDemoMode ? DEMO_USER_ID : user?.id ?? '';
   const todayEntry = entries.find((entry) => entry.entry_date === todayKey) ?? null;
@@ -145,6 +162,20 @@ export function EveningNoteApp() {
     if (currentUserId.current !== nextUserId) accountEpoch.current += 1;
     currentUserId.current = nextUserId;
     setUser(nextUser);
+  }, []);
+
+  const applyRecoveryState = useCallback((nextState: PasswordRecoveryState | 'none') => {
+    recoveryStateRef.current = nextState;
+    setRecoveryState(nextState);
+  }, []);
+
+  const clearAuthCallbackUrl = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.history.replaceState(
+      window.history.state,
+      '',
+      getCleanAuthCallbackUrl(window.location.href),
+    );
   }, []);
 
   useEffect(() => {
@@ -230,11 +261,20 @@ export function EveningNoteApp() {
 
     let active = true;
     let authEventVersion = 0;
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    let recoveryCheckTimer: number | null = null;
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
       authEventVersion += 1;
+      if (event === 'PASSWORD_RECOVERY') applyRecoveryState('ready');
       applyAuthenticatedUser(session?.user ?? null);
       setAuthReady(true);
     });
+    if (recoveryStateRef.current === 'checking') {
+      recoveryCheckTimer = window.setTimeout(() => {
+        if (active && recoveryStateRef.current === 'checking') {
+          applyRecoveryState('error');
+        }
+      }, 5_000);
+    }
 
     const sessionVersion = authEventVersion;
     void supabase.auth.getSession()
@@ -251,9 +291,10 @@ export function EveningNoteApp() {
 
     return () => {
       active = false;
+      if (recoveryCheckTimer !== null) window.clearTimeout(recoveryCheckTimer);
       data.subscription.unsubscribe();
     };
-  }, [applyAuthenticatedUser, supabase]);
+  }, [applyAuthenticatedUser, applyRecoveryState, supabase]);
 
   useEffect(() => {
     setStateOwnerId(userId);
@@ -787,6 +828,31 @@ export function EveningNoteApp() {
     }
   }
 
+  async function changePassword(currentPassword: string, nextPassword: string): Promise<string> {
+    if (!supabase || !user) return 'Sign in again before changing your password.';
+    try {
+      const { error } = await changeAccountPassword(supabase, currentPassword, nextPassword);
+      return error ? passwordUpdateErrorMessage(error) : '';
+    } catch (caughtError) {
+      return passwordUpdateErrorMessage(caughtError);
+    }
+  }
+
+  function finishPasswordRecovery(nextUser: User) {
+    applyAuthenticatedUser(nextUser);
+    setAuthScreenMode('sign-in');
+    clearAuthCallbackUrl();
+    applyRecoveryState('none');
+    setAuthReady(true);
+  }
+
+  function requestNewRecovery() {
+    clearAuthCallbackUrl();
+    applyRecoveryState('none');
+    if (user) navigate('settings');
+    else setAuthScreenMode('forgot');
+  }
+
   async function signOut() {
     if (!supabase || !user) return;
     const requestedAccount: OperationScope = { epoch: accountEpoch.current, userId };
@@ -814,6 +880,7 @@ export function EveningNoteApp() {
       draftPersistence.current = { ...draftPersistence.current, content: '', ready: false, userId: '' };
       draftRef.current = '';
       clearUserDrafts(signedOutUserId);
+      setAuthScreenMode('sign-in');
       signOutSucceeded = true;
       reconcileRequestedWhileSuspended.current = false;
     } catch {
@@ -828,6 +895,17 @@ export function EveningNoteApp() {
     }
   }
 
+  if (!isDemoMode && supabase && recoveryState !== 'none') {
+    return (
+      <PasswordRecoveryScreen
+        client={supabase}
+        state={recoveryState}
+        onComplete={finishPasswordRecovery}
+        onRequestNew={requestNewRecovery}
+      />
+    );
+  }
+
   if (!authReady) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#f4efe7] text-[#1d3930]">
@@ -837,7 +915,9 @@ export function EveningNoteApp() {
   }
 
   if (!isDemoMode && !isSupabaseConfigured) return <SetupRequired />;
-  if (!isDemoMode && !user && supabase) return <AuthScreen client={supabase} />;
+  if (!isDemoMode && !user && supabase) {
+    return <AuthScreen key={authScreenMode} client={supabase} initialMode={authScreenMode} />;
+  }
   if (stateOwnerId !== userId) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#f4efe7] text-[#1d3930]">
@@ -971,6 +1051,7 @@ export function EveningNoteApp() {
             onEnable={() => void enableReminder()}
             onDisable={() => void disableReminder()}
             onTest={() => void sendTestPush()}
+            onChangePassword={changePassword}
             onSignOut={() => void signOut()}
             demoMode={isDemoMode}
             signedInEmail={user?.email ?? ''}
@@ -993,13 +1074,21 @@ type SettingsViewProps = {
   onEnable: () => void;
   onDisable: () => void;
   onTest: () => void;
+  onChangePassword: (currentPassword: string, nextPassword: string) => Promise<string>;
   onSignOut: () => void;
 };
 
-function SettingsView({ timezone, reminderState, reminderMessage, pushBusy, demoMode, signedInEmail, onEnable, onDisable, onTest, onSignOut }: SettingsViewProps) {
+function SettingsView({ timezone, reminderState, reminderMessage, pushBusy, demoMode, signedInEmail, onEnable, onDisable, onTest, onChangePassword, onSignOut }: SettingsViewProps) {
   const installed = isStandalone();
   const appleMobile = isAppleMobile();
   const enabled = reminderState === 'enabled';
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [nextPassword, setNextPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState('');
   const stateCopy: Record<ReminderState, string> = {
     unsupported: 'Web Push is not available in this browser.',
     'needs-install': 'Open Evening Note from your Home Screen to enable iPhone reminders.',
@@ -1010,6 +1099,33 @@ function SettingsView({ timezone, reminderState, reminderMessage, pushBusy, demo
     denied: 'Notifications are blocked. Allow them in iPhone Settings to continue.',
     error: 'Reminder setup needs attention.',
   };
+
+  async function submitPasswordChange() {
+    if (!currentPassword) {
+      setPasswordError('Enter your current password.');
+      return;
+    }
+    const validationError = passwordValidationMessage(nextPassword, passwordConfirmation);
+    if (validationError) {
+      setPasswordError(validationError);
+      return;
+    }
+
+    setPasswordBusy(true);
+    setPasswordError('');
+    setPasswordMessage('');
+    const updateError = await onChangePassword(currentPassword, nextPassword);
+    if (updateError) {
+      setPasswordError(updateError);
+    } else {
+      setCurrentPassword('');
+      setNextPassword('');
+      setPasswordConfirmation('');
+      setShowPasswords(false);
+      setPasswordMessage('Your password has been updated.');
+    }
+    setPasswordBusy(false);
+  }
 
   return (
     <section className="py-10">
@@ -1073,10 +1189,82 @@ function SettingsView({ timezone, reminderState, reminderMessage, pushBusy, demo
       </div>
 
       {!demoMode && (
-        <div className="mt-8 border-t border-[#d6cec2] pt-6">
-          <p className="mb-3 text-xs text-[#5d6963]">Signed in as {signedInEmail}</p>
-          <button type="button" onClick={onSignOut} disabled={pushBusy} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#d0c7ba] bg-white/40 px-4 text-sm font-semibold text-[#76493e] disabled:opacity-60"><span aria-hidden="true">↪</span>Sign out and disable this device</button>
-        </div>
+        <>
+          <div className="mt-5 rounded-[1.7rem] border border-[#d5cdc1] bg-[#fffdf8] p-5 shadow-[0_15px_45px_rgba(50,57,50,0.05)]">
+            <div className="flex items-center gap-3">
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#e9e5d9] text-xl text-[#1d3930]" aria-hidden="true">◇</span>
+              <div><h2 className="text-sm font-semibold">Account password</h2><p className="mt-1 text-xs leading-5 text-[#5d6963]">Signed in as {signedInEmail}</p></div>
+            </div>
+
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitPasswordChange();
+              }}
+            >
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-[#45524c]">Current password</span>
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  className="min-h-12 w-full rounded-xl border border-[#d4ccbf] bg-white px-4 text-base outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
+                  disabled={passwordBusy}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-[#45524c]">New password</span>
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  minLength={PASSWORD_MIN_LENGTH}
+                  value={nextPassword}
+                  onChange={(event) => setNextPassword(event.target.value)}
+                  className="min-h-12 w-full rounded-xl border border-[#d4ccbf] bg-white px-4 text-base outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
+                  disabled={passwordBusy}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-[#45524c]">Confirm new password</span>
+                <input
+                  type={showPasswords ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  minLength={PASSWORD_MIN_LENGTH}
+                  value={passwordConfirmation}
+                  onChange={(event) => setPasswordConfirmation(event.target.value)}
+                  className="min-h-12 w-full rounded-xl border border-[#d4ccbf] bg-white px-4 text-base outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
+                  disabled={passwordBusy}
+                  required
+                />
+              </label>
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-[#68736d]">At least {PASSWORD_MIN_LENGTH} characters.</p>
+                <button type="button" onClick={() => setShowPasswords((value) => !value)} className="min-h-10 rounded-xl px-3 text-xs font-semibold text-[#52625a]">
+                  {showPasswords ? 'Hide passwords' : 'Show passwords'}
+                </button>
+              </div>
+
+              <div className="min-h-9 text-xs leading-5" aria-live="polite">
+                {passwordError && <p className="text-[#a4432b]">{passwordError}</p>}
+                {!passwordError && passwordMessage && <p className="text-[#52655b]">{passwordMessage}</p>}
+              </div>
+
+              <button type="submit" disabled={passwordBusy} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#1d3930] px-4 text-sm font-semibold text-white disabled:opacity-60">
+                {passwordBusy && <span className="inline-block animate-spin" aria-hidden="true">↻</span>}
+                Update password
+              </button>
+            </form>
+          </div>
+
+          <div className="mt-8 border-t border-[#d6cec2] pt-6">
+            <button type="button" onClick={onSignOut} disabled={pushBusy || passwordBusy} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#d0c7ba] bg-white/40 px-4 text-sm font-semibold text-[#76493e] disabled:opacity-60"><span aria-hidden="true">↪</span>Sign out and disable this device</button>
+          </div>
+        </>
       )}
     </section>
   );

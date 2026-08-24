@@ -1,23 +1,24 @@
 project_id = "evening-note"
 
 [auth]
-site_url = "https://evening-note-1945.gs-samshuijzen.chatgpt.site"
+enable_signup = true
+site_url = "https://rusherzero.github.io/evening-note/"
 additional_redirect_urls = [
-  "http://localhost:3000",
+  "http://localhost:3000/",
+  "http://localhost:3000/?auth=recovery",
   "https://evening-note-1945.gs-samshuijzen.chatgpt.site",
-  "https://rusherzero.github.io/evening-note/"
+  "https://evening-note-1945.gs-samshuijzen.chatgpt.site/?auth=recovery",
+  "https://rusherzero.github.io/evening-note/",
+  "https://rusherzero.github.io/evening-note/?auth=recovery"
 ]
 
 [auth.email]
-# Eight digits increases entropy while remaining easy to paste. The client
-# accepts every Supabase-supported email OTP length (6–10 digits).
+enable_signup = true
 enable_confirmations = true
 max_frequency = "1m"
-otp_length = 8
-
-[auth.email.template.magic_link]
-subject = "Your Evening Note sign-in code"
-content_path = "./supabase/templates/magic_link.html"
+# Password changes require the current password in the hosted dashboard. Keep
+# email-OTP reauthentication disabled so the password flow stays link-based.
+secure_password_change = false
 
 [auth.mfa.totp]
 enroll_enabled = true

@@ -1,132 +1,170 @@
 'use client';
-/* eslint-disable react-hooks/set-state-in-effect -- effects restore external session state */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  INVALID_OR_EXPIRED_OTP_MESSAGE,
+  PASSWORD_MIN_LENGTH,
+  type AuthFlowMode,
+  getAuthRedirectUrl,
   isPlausibleEmail,
-  isValidEmailOtp,
+  isValidPassword,
   normalizeEmail,
-  normalizeEmailOtp,
-  requestOtpErrorMessage,
+  passwordValidationMessage,
+  recoveryRequestErrorMessage,
+  signInErrorMessage,
+  signUpErrorMessage,
 } from '@/lib/auth';
+import { publicConfig } from '@/lib/config';
+import {
+  requestPasswordRecovery,
+  signInWithPassword,
+  signUpWithPassword,
+} from '@/lib/password-auth';
+import { withBasePath } from '@/lib/paths';
 
 type AuthScreenProps = {
   client: SupabaseClient;
+  initialMode?: AuthFlowMode;
 };
 
-const PENDING_EMAIL_KEY = 'evening-note:pending-email';
+function currentSiteUrl(): string {
+  if (publicConfig.siteUrl) return publicConfig.siteUrl;
+  return `${window.location.origin}${withBasePath('/', publicConfig.basePath)}`;
+}
 
-export function AuthScreen({ client }: AuthScreenProps) {
+type PasswordFieldProps = {
+  autoComplete: 'current-password' | 'new-password';
+  disabled: boolean;
+  label: string;
+  name: string;
+  onChange: (value: string) => void;
+  show: boolean;
+  toggleShow: () => void;
+  value: string;
+};
+
+function PasswordField({ autoComplete, disabled, label, name, onChange, show, toggleShow, value }: PasswordFieldProps) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm font-semibold text-[#45524c]">{label}</span>
+      <span className="relative block">
+        <input
+          type={show ? 'text' : 'password'}
+          name={name}
+          autoComplete={autoComplete}
+          minLength={PASSWORD_MIN_LENGTH}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="min-h-14 w-full rounded-2xl border border-[#d4ccbf] bg-[#fffdf8] px-4 py-3 pr-20 text-base outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
+          disabled={disabled}
+          required
+        />
+        <button
+          type="button"
+          onClick={toggleShow}
+          className="absolute inset-y-1 right-1 min-w-16 rounded-xl px-3 text-xs font-semibold text-[#52625a]"
+          aria-label={`${show ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
+        >
+          {show ? 'Hide' : 'Show'}
+        </button>
+      </span>
+    </label>
+  );
+}
+
+export function AuthScreen({ client, initialMode = 'sign-in' }: AuthScreenProps) {
+  const [mode, setMode] = useState<AuthFlowMode>(initialMode);
   const [email, setEmail] = useState('');
-  const [token, setToken] = useState('');
-  const [stage, setStage] = useState<'email' | 'code'>('email');
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [cooldown, setCooldown] = useState(0);
 
-  useEffect(() => {
-    try {
-      const pendingEmail = window.sessionStorage.getItem(PENDING_EMAIL_KEY);
-      if (pendingEmail) {
-        setEmail(pendingEmail);
-        setStage('code');
-      }
-    } catch {
-      // The form still works if session storage is unavailable.
-    }
-  }, []);
+  function changeMode(nextMode: AuthFlowMode) {
+    setMode(nextMode);
+    setPassword('');
+    setConfirmation('');
+    setShowPassword(false);
+    setMessage('');
+    setError('');
+  }
 
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const timer = window.setInterval(
-      () => setCooldown((value) => Math.max(0, value - 1)),
-      1000,
-    );
-    return () => window.clearInterval(timer);
-  }, [cooldown]);
-
-  async function sendCode() {
+  async function submit() {
     const normalizedEmail = normalizeEmail(email);
     if (!isPlausibleEmail(normalizedEmail)) {
       setError('Enter a valid email address.');
       return;
     }
 
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      const { error: authError } = await client.auth.signInWithOtp({
-        email: normalizedEmail,
-        options: { shouldCreateUser: true },
-      });
-      if (authError) {
-        setError(requestOtpErrorMessage(authError.status));
-        return;
-      }
-
-      setEmail(normalizedEmail);
-      setStage('code');
-      setCooldown(60);
-      setMessage('A sign-in code is on its way.');
-      try {
-        window.sessionStorage.setItem(PENDING_EMAIL_KEY, normalizedEmail);
-      } catch {
-        // Best-effort convenience only.
-      }
-    } catch {
-      setError(requestOtpErrorMessage());
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function verifyCode() {
-    if (!isValidEmailOtp(token)) {
-      setError('Enter the 6–10 digit code from your email.');
+    if (mode === 'sign-in' && !isValidPassword(password)) {
+      setError(`Enter your password of at least ${PASSWORD_MIN_LENGTH} characters.`);
       return;
     }
 
+    if (mode === 'sign-up') {
+      const validationError = passwordValidationMessage(password, confirmation);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
+
     setBusy(true);
     setError('');
     setMessage('');
     try {
-      const { error: authError } = await client.auth.verifyOtp({
-        email,
-        token,
-        type: 'email',
-      });
-      if (authError) {
-        setError(INVALID_OR_EXPIRED_OTP_MESSAGE);
+      if (mode === 'sign-in') {
+        const { error: authError } = await signInWithPassword(client, normalizedEmail, password);
+        if (authError) setError(signInErrorMessage(authError));
         return;
       }
 
-      try {
-        window.sessionStorage.removeItem(PENDING_EMAIL_KEY);
-      } catch {
-        // Best-effort convenience only.
+      if (mode === 'sign-up') {
+        const { data, error: authError } = await signUpWithPassword(
+          client,
+          normalizedEmail,
+          password,
+          getAuthRedirectUrl(currentSiteUrl()),
+        );
+        if (authError) {
+          setError(signUpErrorMessage(authError));
+          return;
+        }
+        if (!data.session) {
+          setPassword('');
+          setConfirmation('');
+          setMessage('Check your email to confirm your account, then return to Evening Note.');
+        }
+        return;
       }
-    } catch {
-      setError('We could not verify the code. Check your connection and try again.');
+
+      const { error: authError } = await requestPasswordRecovery(
+        client,
+        normalizedEmail,
+        getAuthRedirectUrl(currentSiteUrl(), 'recovery'),
+      );
+      if (authError) {
+        setError(recoveryRequestErrorMessage(authError));
+        return;
+      }
+      setMessage('If an account exists for that email, we sent a password reset link.');
+    } catch (caughtError) {
+      if (mode === 'sign-in') setError(signInErrorMessage(caughtError));
+      else if (mode === 'sign-up') setError(signUpErrorMessage(caughtError));
+      else setError(recoveryRequestErrorMessage(caughtError));
     } finally {
       setBusy(false);
     }
   }
 
-  function editEmail() {
-    setStage('email');
-    setToken('');
-    setError('');
-    setMessage('');
-    try {
-      window.sessionStorage.removeItem(PENDING_EMAIL_KEY);
-    } catch {
-      // Best-effort convenience only.
-    }
-  }
+  const isForgot = mode === 'forgot';
+  const heading = isForgot
+    ? 'Find your way back.'
+    : mode === 'sign-up'
+      ? 'Begin your evening ritual.'
+      : 'A quiet moment, every evening.';
 
   return (
     <main className="min-h-screen bg-[#f4efe7] px-5 pb-10 pt-[max(2rem,env(safe-area-inset-top))] text-[#18201d]">
@@ -139,84 +177,112 @@ export function AuthScreen({ client }: AuthScreenProps) {
           </div>
         </header>
 
-        <section className="my-auto py-14">
-          {stage === 'code' && (
-            <button type="button" onClick={editEmail} className="mb-8 inline-flex min-h-11 items-center gap-2 rounded-xl pr-3 text-sm font-semibold text-[#52625a]">
-              <span className="text-lg" aria-hidden="true">←</span> Change email
+        <section className="my-auto py-12">
+          {isForgot && (
+            <button type="button" onClick={() => changeMode('sign-in')} className="mb-7 inline-flex min-h-11 items-center gap-2 rounded-xl pr-3 text-sm font-semibold text-[#52625a]">
+              <span className="text-lg" aria-hidden="true">←</span> Back to sign in
             </button>
           )}
 
-          <p className="mb-3 text-sm font-medium text-[#5d6963]">{stage === 'email' ? 'Welcome' : 'Check your inbox'}</p>
-          <h1 className="max-w-sm font-serif text-[2.65rem] leading-[1.03] tracking-[-0.035em]">
-            {stage === 'email' ? 'A quiet moment, every evening.' : 'Paste your sign-in code.'}
-          </h1>
+          <p className="mb-3 text-sm font-medium text-[#5d6963]">
+            {isForgot ? 'Reset your password' : mode === 'sign-up' ? 'Create an account' : 'Welcome back'}
+          </p>
+          <h1 className="max-w-sm font-serif text-[2.65rem] leading-[1.03] tracking-[-0.035em]">{heading}</h1>
           <p className="mt-4 max-w-sm text-[15px] leading-6 text-[#5d6963]">
-            {stage === 'email'
-              ? 'Sign in by email to keep your notes safe and available on every device.'
-              : `We sent it to ${email}.`}
+            {isForgot
+              ? 'Enter your email and we will send a secure password reset link.'
+              : mode === 'sign-up'
+                ? 'Create one private account for notes that follow you between devices.'
+                : 'Sign in to write today’s note and revisit the evenings before it.'}
           </p>
 
+          {!isForgot && (
+            <div className="mt-7 grid grid-cols-2 rounded-2xl bg-[#e9e4da] p-1" aria-label="Authentication mode">
+              {(['sign-in', 'sign-up'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => changeMode(item)}
+                  disabled={busy}
+                  className={`min-h-11 rounded-xl px-3 text-sm font-semibold transition ${mode === item ? 'bg-[#fffdf8] text-[#1d3930] shadow-sm' : 'text-[#68736d]'}`}
+                  aria-pressed={mode === item}
+                >
+                  {item === 'sign-in' ? 'Sign in' : 'Create account'}
+                </button>
+              ))}
+            </div>
+          )}
+
           <form
-            className="mt-8"
+            className="mt-6 space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              void (stage === 'email' ? sendCode() : verifyCode());
+              void submit();
             }}
           >
-            {stage === 'email' ? (
-              <label className="block">
-                <span className="mb-2 block text-sm font-semibold text-[#45524c]">Email address</span>
-                <span className="relative block">
-                  <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg text-[#5d6963]" aria-hidden="true">@</span>
-                  <input
-                    type="email"
-                    autoComplete="email"
-                    inputMode="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    className="min-h-14 w-full rounded-2xl border border-[#d4ccbf] bg-[#fffdf8] py-3 pl-12 pr-4 text-base outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
-                    placeholder="you@example.com"
-                    disabled={busy}
-                    required
-                  />
-                </span>
-              </label>
-            ) : (
-              <label className="block">
-                <span className="mb-2 block text-sm font-semibold text-[#45524c]">One-time code</span>
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#45524c]">Email address</span>
+              <span className="relative block">
+                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg text-[#5d6963]" aria-hidden="true">@</span>
                 <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6,10}"
-                  minLength={6}
-                  maxLength={10}
-                  value={token}
-                  onChange={(event) => setToken(normalizeEmailOtp(event.target.value))}
-                  className="min-h-16 w-full rounded-2xl border border-[#d4ccbf] bg-[#fffdf8] px-5 text-center font-mono text-2xl tracking-[0.22em] outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
-                  placeholder="Paste code"
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="min-h-14 w-full rounded-2xl border border-[#d4ccbf] bg-[#fffdf8] py-3 pl-12 pr-4 text-base outline-none transition focus:border-[#637970] focus:ring-4 focus:ring-[#637970]/10"
+                  placeholder="you@example.com"
                   disabled={busy}
                   required
-                  autoFocus
                 />
-              </label>
+              </span>
+            </label>
+
+            {!isForgot && (
+              <PasswordField
+                autoComplete={mode === 'sign-up' ? 'new-password' : 'current-password'}
+                disabled={busy}
+                label="Password"
+                name="password"
+                onChange={setPassword}
+                show={showPassword}
+                toggleShow={() => setShowPassword((value) => !value)}
+                value={password}
+              />
             )}
 
-            <div className="min-h-12 pt-3 text-sm" aria-live="polite">
+            {mode === 'sign-up' && (
+              <>
+                <PasswordField
+                  autoComplete="new-password"
+                  disabled={busy}
+                  label="Confirm password"
+                  name="password-confirmation"
+                  onChange={setConfirmation}
+                  show={showPassword}
+                  toggleShow={() => setShowPassword((value) => !value)}
+                  value={confirmation}
+                />
+                <p className="text-xs leading-5 text-[#68736d]">Use at least {PASSWORD_MIN_LENGTH} characters.</p>
+              </>
+            )}
+
+            {mode === 'sign-in' && (
+              <button type="button" onClick={() => changeMode('forgot')} disabled={busy} className="min-h-11 rounded-xl text-sm font-semibold text-[#52625a]">
+                Forgot password?
+              </button>
+            )}
+
+            <div className="min-h-12 text-sm" aria-live="polite">
               {error && <p className="text-[#a4432b]">{error}</p>}
-              {!error && message && <p className="text-[#52655b]">{message}</p>}
+              {!error && message && <p className="leading-5 text-[#52655b]">{message}</p>}
             </div>
 
             <button type="submit" disabled={busy} className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#1d3930] px-5 text-base font-semibold text-[#fffdf8] shadow-[0_12px_30px_rgba(29,57,48,0.2)] transition active:scale-[0.99] disabled:cursor-wait disabled:opacity-65">
               {busy && <span className="inline-block animate-spin text-lg" aria-hidden="true">↻</span>}
-              {stage === 'email' ? 'Email me a code' : 'Open Evening Note'}
+              {isForgot ? 'Send reset link' : mode === 'sign-up' ? 'Create account' : 'Open Evening Note'}
             </button>
-
-            {stage === 'code' && (
-              <button type="button" onClick={() => void sendCode()} disabled={busy || cooldown > 0} className="mt-3 min-h-12 w-full rounded-xl text-sm font-semibold text-[#52625a] disabled:opacity-55">
-                {cooldown > 0 ? `Send a new code in ${cooldown}s` : 'Send a new code'}
-              </button>
-            )}
           </form>
         </section>
 

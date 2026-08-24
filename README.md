@@ -4,7 +4,7 @@ Evening Note is an iPhone-first progressive web app for one private daily text e
 
 ## What is implemented
 
-- Email one-time-code authentication through Supabase Auth.
+- Verified email-and-password authentication through Supabase Auth, including signup, recovery, and password changes.
 - One entry per authenticated user and local calendar day, with a read-only history.
 - Row-level security and a server-side `save_daily_entry` RPC.
 - Installable PWA metadata, Apple touch icon, maskable icon, offline shell, and device-scoped draft recovery.
@@ -40,9 +40,11 @@ npm run build
    supabase db push
    ```
 
-2. Configure custom SMTP (or use a Supabase plan/provider that permits hosted email-template changes). Supabase's default free-tier mail provider rejects custom template updates. Then run `supabase config push`, or replace **Authentication → Email Templates → Magic Link** manually with `supabase/templates/magic_link.html`. The template puts `{{ .Token }}` directly in the email instead of relying on link capture. `supabase db push` applies database migrations only; it does not apply Auth settings or email templates.
+2. Apply the password-auth configuration with `supabase config push`. It enables email signup and confirmation, makes the GitHub Pages URL canonical, and allowlists the exact local, Sites, Pages, and password-recovery callbacks. `supabase db push` applies database migrations only; it does not apply Auth configuration.
 
-   The configured code is eight digits. The client accepts and cleans up pasted numeric OTPs from 6 through 10 digits, which is Supabase's supported range. Until the hosted template can be changed, the repository is ready but token-only email delivery is not active in the remote project.
+   In **Authentication → Sign In / Providers → Email**, set the minimum password length to `8`, enable **Confirm email**, and enable **Require current password when updating**. Leave the separate secure-password-change/email-OTP reauthentication option disabled. The application removes OTP sign-in entirely; an existing OTP account can use **Forgot password** to set its first password without changing its user ID or entries.
+
+   Supabase's built-in mailer only sends confirmation and recovery emails to project-team addresses and is limited to two messages per hour. That is sufficient for initial team testing. Configure custom SMTP before allowing public registration.
 
 3. Generate a VAPID P-256 key pair locally. Do not commit or paste the private key into browser configuration:
 
