@@ -33,6 +33,7 @@ import {
 } from '@/lib/pwa';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { changeAccountPassword } from '@/lib/password-auth';
+import { pushFunctionErrorMessage } from '@/lib/push-errors';
 import {
   hasNewerDraftEdits,
   isSameOperationScope,
@@ -805,26 +806,68 @@ export function EveningNoteApp() {
 
   async function sendTestPush() {
     const requestedAccount: OperationScope = { epoch: accountEpoch.current, userId };
+    reconcileSuspended.current = true;
     setPushBusy(true);
     setReminderMessage('Sending a test…');
     try {
-      const registration = await registerServiceWorker();
-      const subscription = await registration?.pushManager.getSubscription();
-      if (!isCurrentAccount(requestedAccount)) return;
-      const serialized = subscription ? serializeSubscription(subscription) : null;
-      if (!serialized || !supabase || !user) throw new Error('No active subscription');
+      if (Notification.permission !== 'granted') {
+        setReminderState(Notification.permission === 'denied' ? 'denied' : 'default');
+        setReminderMessage('Allow notifications on this device before sending a test.');
+        return;
+      }
 
-      const { error } = await supabase.functions.invoke('test-push', {
-        body: { installationId: getInstallationId(), endpoint: serialized.endpoint },
+      await reconcileRunner.current?.whenIdle();
+      if (!isCurrentAccount(requestedAccount)) return;
+      const registration = await registerServiceWorker();
+      if (!registration) throw new Error('Service worker unavailable');
+      let subscription = await registration.pushManager.getSubscription();
+      subscription ??= await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicConfig.vapidPublicKey),
       });
       if (!isCurrentAccount(requestedAccount)) return;
-      if (error) throw error;
+      const serialized = serializeSubscription(subscription);
+      if (!serialized || !supabase || !user) throw new Error('No active subscription');
+
+      const installationId = getInstallationId();
+      const { error: syncError } = await supabase.functions.invoke('push-subscription', {
+        body: {
+          action: 'upsert',
+          installationId,
+          timezone: timezoneRef.current,
+          subscription: serialized,
+        },
+      });
+      if (!isCurrentAccount(requestedAccount)) return;
+      if (syncError) {
+        const message = await pushFunctionErrorMessage(syncError, 'sync');
+        if (!isCurrentAccount(requestedAccount)) return;
+        setReminderState('needs-sync');
+        setReminderMessage(message);
+        return;
+      }
+
+      setReminderState('enabled');
+      const { error: testError } = await supabase.functions.invoke('test-push', {
+        body: { installationId, endpoint: serialized.endpoint },
+      });
+      if (!isCurrentAccount(requestedAccount)) return;
+      if (testError) {
+        const message = await pushFunctionErrorMessage(testError, 'test');
+        if (!isCurrentAccount(requestedAccount)) return;
+        setReminderMessage(message);
+        return;
+      }
       setReminderMessage('Test sent. It may take a moment to appear.');
     } catch {
       if (!isCurrentAccount(requestedAccount)) return;
-      setReminderMessage('The test could not be sent. Check your connection and try again.');
+      setReminderState('needs-sync');
+      setReminderMessage('This device’s notification subscription could not be refreshed. Turn reminders off and on again.');
     } finally {
-      if (isCurrentAccount(requestedAccount)) setPushBusy(false);
+      if (isCurrentAccount(requestedAccount)) {
+        setPushBusy(false);
+        resumeReconciliation(requestedAccount);
+      }
     }
   }
 

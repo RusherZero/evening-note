@@ -92,23 +92,36 @@ export function clearUserDrafts(userId: string): boolean {
   }
 }
 
-export function getInstallationId(): string {
+const INSTALLATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+let transientInstallationId = '';
+
+function createInstallationId(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+
   const bytes = new Uint8Array(16);
   globalThis.crypto?.getRandomValues?.(bytes);
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
-  const fallback = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  if (typeof window === 'undefined') return fallback;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function getInstallationId(): string {
+  const generated = createInstallationId();
+  if (typeof window === 'undefined') return generated;
+
+  transientInstallationId ||= generated;
 
   const key = 'evening-note:installation-id';
   try {
     const existing = window.localStorage.getItem(key);
-    if (existing) return existing;
-    const created = globalThis.crypto?.randomUUID?.() ?? fallback;
-    window.localStorage.setItem(key, created);
-    return created;
+    if (existing && INSTALLATION_ID_PATTERN.test(existing)) return existing;
+    window.localStorage.setItem(key, transientInstallationId);
+    return transientInstallationId;
   } catch {
-    return fallback;
+    // Some iOS storage states can reject localStorage. Keep one stable ID for
+    // this app session so registration and test calls still reference the
+    // same device record.
+    return transientInstallationId;
   }
 }

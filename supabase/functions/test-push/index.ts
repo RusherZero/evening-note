@@ -33,7 +33,11 @@ Deno.serve(async (request) => {
     p_endpoint: body.endpoint,
   });
   const row = Array.isArray(data) ? data[0] : null;
-  if (error || !row) {
+  if (error) {
+    console.error('test-push subscription claim failed', { code: error.code || 'unknown' });
+    return jsonResponse(request, { error: 'Test notification service is unavailable' }, 503);
+  }
+  if (!row) {
     return jsonResponse(request, { error: 'Wait one minute before sending another test' }, 429);
   }
 
@@ -42,6 +46,7 @@ Deno.serve(async (request) => {
     return jsonResponse(request, { accepted: true }, 202);
   } catch (pushError) {
     const status = pushStatus(pushError);
+    console.warn('test-push provider request failed', { status: status ?? 'network' });
     if (status === 404 || status === 410) {
       const { data: disabled, error: disableError } = await admin.rpc('_internal_disable_push_subscription', {
         p_user_id: user.id,
