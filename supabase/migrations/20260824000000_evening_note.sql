@@ -423,13 +423,13 @@ declare
   v_subscription private.push_subscriptions%rowtype;
   v_rate_claimed uuid;
 begin
-  select * into v_subscription
-  from private.push_subscriptions
-  where user_id = p_user_id
-    and installation_id = p_installation_id
-    and endpoint = p_endpoint
-    and enabled
-    and disabled_at is null
+  select subscription.* into v_subscription
+  from private.push_subscriptions as subscription
+  where subscription.user_id = p_user_id
+    and subscription.installation_id = p_installation_id
+    and subscription.endpoint = p_endpoint
+    and subscription.enabled
+    and subscription.disabled_at is null
   for update;
 
   if not found then
@@ -456,11 +456,11 @@ begin
     return;
   end if;
 
-  update private.push_subscriptions
+  update private.push_subscriptions as subscription
   set
     last_test_at = v_now,
     updated_at = v_now
-  where private.push_subscriptions.id = v_subscription.id;
+  where subscription.id = v_subscription.id;
 
   return query select
     v_subscription.id,
